@@ -1,0 +1,131 @@
+#!/usr/bin/env bash
+#
+# Usage: progfun-templ <filename> [-version V] [-date D] [-name N] [-email E]
+#        progfun-templ --set-name "your name" --set-email "email@example.com"
+
+set -uo pipefail
+
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/progfun-templ"
+CONFIG_FILE="$CONFIG_DIR/config"
+
+die() { printf 'progfun-templ: %s\n' "$1" >&2; exit 1; }
+
+usage() {
+    cat <<'EOF'
+Usage:
+  progfun-templ <filename> [-version V] [-date D] [-name N] [-email E]
+  progfun-templ --set-name "your name" --set-email "email@example.com"
+
+Options:
+  -version V     version string ["1.0"]
+  -date D        date string    [current date]
+  -name N        author name    [config]
+  -email E       author email   [config]
+  --set-name N   store name in config
+  --set-email E  store email in config
+  -h, --help     show help
+EOF
+}
+
+NAME=""
+EMAIL=""
+VERSION="1.0"
+DATE="$(date +%F)"
+
+if [[ -f "$CONFIG_FILE" ]]; then
+    # shellcheck source=/dev/null
+    source "$CONFIG_FILE"
+fi
+
+save_config() {
+    mkdir -p "$CONFIG_DIR"
+    {
+        printf 'NAME=%q\n' "$NAME"
+        printf 'EMAIL=%q\n' "$EMAIL"
+    } > "$CONFIG_FILE"
+}
+
+FILENAME=""
+SAVE=0
+
+need_arg() { [[ $# -ge 2 ]] || die "option '$1' needs a value"; }
+
+while (( $# > 0 )); do
+    case "$1" in
+        -h|--help)              usage; exit 0 ;;
+        -version|--version)     need_arg "$@"; VERSION="$2"; shift 2 ;;
+        -date|--date)           need_arg "$@"; DATE="$2";    shift 2 ;;
+        -name|--name)           need_arg "$@"; NAME="$2";    shift 2 ;;
+        -email|--email)         need_arg "$@"; EMAIL="$2";   shift 2 ;;
+        --set-name)             need_arg "$@"; NAME="$2";  SAVE=1; shift 2 ;;
+        --set-email)            need_arg "$@"; EMAIL="$2"; SAVE=1; shift 2 ;;
+        --)                     shift; FILENAME="${1:-}"; break ;;
+        -*)                     die "unknown option '$1' (try --help)" ;;
+        *)
+            [[ -z "$FILENAME" ]] || die "only one filename allowed"
+            FILENAME="$1"; shift ;;
+    esac
+done
+
+if (( SAVE )) && [[ -z "$FILENAME" ]]; then
+    save_config
+    printf 'Saved: NAME=%s EMAIL=%s\n' "$NAME" "$EMAIL"
+    exit 0
+fi
+
+[[ -n "$FILENAME" ]] || { usage; exit 1; }
+
+if [[ -z "$NAME" || -z "$EMAIL" ]]; then
+    echo "initial setup - enter default author details"
+    [[ -n "$NAME"  ]] || read -r -p "name:  " NAME
+    [[ -n "$EMAIL" ]] || read -r -p "email: " EMAIL
+    save_config
+    echo
+elif (( SAVE )); then
+    save_config
+fi
+
+BASENAME="$(basename -- "$FILENAME")"
+DIRNAME="$(dirname -- "$FILENAME")"
+
+if [[ -e "$FILENAME" ]]; then
+    read -r -p "$FILENAME already exists, overwrite? [y/N] " answer
+    [[ "$answer" == [yY] ]] || die "aborted"
+fi
+
+mkdir -p -- "$DIRNAME" || die "could not create directory '$DIRNAME'"
+
+echo "ENTER DESCRIPTION (EMPTY LINE OR CTRL+D TO FINISH)"
+
+description=()
+
+while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -z "$line" ]] && break
+    description+=("$line")
+done
+echo
+
+{
+    printf '// file: %s\n'                "$BASENAME"
+    printf '// author: %s (email: %s)\n'  "$NAME" "$EMAIL"
+    printf '// date: %s\n'                "$DATE"
+    printf '// version: %s\n'             "$VERSION"
+    printf '/* Description:\n'
+    (( ${#description[@]} )) && printf '%s\n' "${description[@]}"
+    printf '*/\n'
+    printf '\n\n'
+    printf '#include <stdio.h>\n'
+    printf '#include <stdlib.h>\n'
+    printf '#include <math.h>\n'
+    printf '\n'
+    printf 'int main(int argc, char *argv[]) {\n'
+    printf '    return 0;\n'
+    printf '}\n'
+} > "$FILENAME" || die "could not write '$FILENAME'"
+
+printf 'created %s\n' "$FILENAME"
+
+if command -v code >/dev/null 2>&1; then
+    code "$FILENAME" >/dev/null 2>&1 &
+    disown
+fi
